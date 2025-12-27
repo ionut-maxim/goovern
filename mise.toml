@@ -1,2 +1,7 @@
+[env]
+_.file = '.env'
 [tools]
+clickhouse = "latest"
 go = "latest"
+"go:github.com/riverqueue/river/cmd/river" = "latest"
+"go:riverqueue.com/riverui/cmd/riverui" = "latest"

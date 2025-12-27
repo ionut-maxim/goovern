@@ -82,3 +82,11 @@ fabric.properties
 /.idea/goovern.iml
 /.idea/modules.xml
 /.idea/vcs.xml
+/data/
+/.idea/codeStyles/codeStyleConfig.xml
+/.idea/queries/Query.sql
+/.idea/data_source_mapping.xml
+/.idea/dataSources.xml
+/.idea/sqldialects.xml
+/.ssh/id_ed25519
+/.ssh/id_ed25519.pub
