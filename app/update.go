@@ -80,6 +80,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			m.table.SetRows(rows)
+			m.table.Focus()
 			m.mode = resultsMode
 			m.textInput.Blur()
 		}

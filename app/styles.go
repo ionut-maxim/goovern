@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/ssh"
 	"github.com/charmbracelet/wish/bubbletea"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/muesli/termenv"
 
 	"github.com/ionut-maxim/goovern/db"
 )
@@ -16,6 +17,7 @@ func NewModel(s ssh.Session, pool *pgxpool.Pool, dbClient *db.DB) (tea.Model, []
 	pty, _, _ := s.Pty()
 
 	renderer := bubbletea.MakeRenderer(s)
+	lipgloss.SetColorProfile(termenv.TrueColor)
 
 	// Create styles with bubbles components aesthetic
 	titleStyle := renderer.NewStyle().
@@ -83,7 +85,8 @@ func NewModel(s ssh.Session, pool *pgxpool.Pool, dbClient *db.DB) (tea.Model, []
 	tableStyles.Selected = tableStyles.Selected.
 		Foreground(lipgloss.Color("#FAFAFA")).
 		Background(lipgloss.Color("#7D56F4")).
-		Bold(false)
+		Bold(true).
+		Underline(true)
 	t.SetStyles(tableStyles)
 
 	m := Model{

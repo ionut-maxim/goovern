@@ -21,8 +21,11 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o goovernd ./cmd/go
 # Final stage
 FROM alpine:latest
 
-# Install ca-certificates for HTTPS connections
-RUN apk --no-cache add ca-certificates
+# Install ca-certificates for HTTPS connections and terminal info
+RUN apk --no-cache add ca-certificates ncurses-terminfo-base
+
+# Set terminal environment for proper rendering
+ENV TERM=xterm-256color
 
 WORKDIR /app
 
