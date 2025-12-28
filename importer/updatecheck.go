@@ -11,12 +11,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
 
 	"github.com/ionut-maxim/goovern/ckan"
 	"github.com/ionut-maxim/goovern/db"
-	"github.com/ionut-maxim/goovern/telemetry"
 )
 
 var packages = []string{}
@@ -38,11 +35,6 @@ type UpdatesWorker struct {
 	db         db.Tx
 	store      ResourceStore
 	resource   resourceGetter
-
-	// Metrics
-	updateCheckDuration metric.Float64Histogram
-	resourcesFound      metric.Int64Counter
-	jobsScheduled       metric.Int64Counter
 
 	river.WorkerDefaults[UpdateCheckArgs]
 }
@@ -66,42 +58,12 @@ func NewUpdatesWorker(jobs *river.Client[pgx.Tx], db db.Tx, res resourceGetter, 
 		return nil, errors.New("resourceGetter required")
 	}
 
-	// Initialize metrics
-	meter := telemetry.Meter()
-	updateCheckDuration, err := meter.Float64Histogram(
-		"goovern.update_check.duration",
-		metric.WithDescription("Duration of update check operations in seconds"),
-		metric.WithUnit("s"),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	resourcesFound, err := meter.Int64Counter(
-		"goovern.update_check.resources_found",
-		metric.WithDescription("Number of new resources discovered"),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	jobsScheduled, err := meter.Int64Counter(
-		"goovern.update_check.jobs_scheduled",
-		metric.WithDescription("Number of jobs scheduled by update checker"),
-	)
-	if err != nil {
-		return nil, err
-	}
-
 	return &UpdatesWorker{
-		ckanClient:          client,
-		jobs:                jobs,
-		db:                  db,
-		resource:            res,
-		logger:              logger.With("worker", "updates"),
-		updateCheckDuration: updateCheckDuration,
-		resourcesFound:      resourcesFound,
-		jobsScheduled:       jobsScheduled,
+		ckanClient: client,
+		jobs:       jobs,
+		db:         db,
+		resource:   res,
+		logger:     logger.With("worker", "updates"),
 	}, nil
 }
 
@@ -129,19 +91,13 @@ func (w *UpdatesWorker) Timeout(*river.Job[UpdateCheckArgs]) time.Duration {
 func (w *UpdatesWorker) Work(ctx context.Context, _ *river.Job[UpdateCheckArgs]) error {
 	startTime := time.Now()
 
-	// Start span for tracing
-	ctx, span := telemetry.StartSpan(ctx, "update_check.work")
-	defer span.End()
-
-	// Create logger with trace context for correlation
-	logger := telemetry.LoggerWithTrace(ctx, w.logger)
+	logger := w.logger
 
 	logger.Info("Starting update check")
 
 	s, err := w.ckanClient.Search(ctx, "onrc", 2)
 	if err != nil {
 		logger.Error("Failed to search CKAN", "error", err)
-		telemetry.RecordError(span, err)
 		return err
 	}
 	logger.Info("CKAN search completed", "packages_found", len(s.Results))
@@ -155,7 +111,6 @@ func (w *UpdatesWorker) Work(ctx context.Context, _ *river.Job[UpdateCheckArgs])
 			_, exists, err := w.resource.Resource(ctx, w.db, resource.Id)
 			if err != nil {
 				logger.Error("Failed to check resource existence", "resource_id", resource.Id, "error", err)
-				telemetry.RecordError(span, err)
 				return err
 			}
 			if exists {
@@ -171,21 +126,15 @@ func (w *UpdatesWorker) Work(ctx context.Context, _ *river.Job[UpdateCheckArgs])
 	if len(newResources) == 0 {
 		duration := time.Since(startTime).Seconds()
 		logger.Info("Update check complete - no new resources found", "duration_seconds", duration)
-
-		w.updateCheckDuration.Record(ctx, duration)
-		w.resourcesFound.Add(ctx, 0)
 		return nil
 	}
 
 	logger.Info("Starting download phase", "total_resources", len(newResources))
-	span.SetAttributes(attribute.Int("resources.found", len(newResources)))
-	w.resourcesFound.Add(ctx, int64(len(newResources)))
 
 	// Schedule all downloads in parallel
 	tx, err := w.db.Begin(ctx)
 	if err != nil {
 		logger.Error("Failed to begin transaction", "error", err)
-		telemetry.RecordError(span, err)
 		return err
 	}
 	defer tx.Rollback(ctx)
@@ -202,24 +151,20 @@ func (w *UpdatesWorker) Work(ctx context.Context, _ *river.Job[UpdateCheckArgs])
 	downloadResults, err := w.jobs.InsertManyTx(ctx, tx, downloadJobs)
 	if err != nil {
 		logger.Error("Failed to insert download jobs", "error", err)
-		telemetry.RecordError(span, err)
 		return err
 	}
 
 	if err = tx.Commit(ctx); err != nil {
 		logger.Error("Failed to commit transaction", "error", err)
-		telemetry.RecordError(span, err)
 		return err
 	}
 
 	logger.Info("Download jobs scheduled", "count", len(downloadResults))
-	w.jobsScheduled.Add(ctx, int64(len(downloadResults)), metric.WithAttributes(attribute.String("job_type", "download")))
 
 	// Wait for all downloads to complete
 	logger.Info("Waiting for all downloads to complete")
 	if err = w.waitForJobs(ctx, downloadResults); err != nil {
 		logger.Error("Downloads failed", "error", err)
-		telemetry.RecordError(span, err)
 		return err
 	}
 
@@ -229,14 +174,12 @@ func (w *UpdatesWorker) Work(ctx context.Context, _ *river.Job[UpdateCheckArgs])
 	logger.Info("Starting import phase")
 	if err = w.scheduleImports(ctx, newResources); err != nil {
 		logger.Error("Failed to schedule imports", "error", err)
-		telemetry.RecordError(span, err)
 		return err
 	}
 
 	duration := time.Since(startTime).Seconds()
 	logger.Info("Update check complete", "resources_processed", len(newResources), "duration_seconds", duration)
 
-	w.updateCheckDuration.Record(ctx, duration)
 	return nil
 }
 
@@ -348,10 +291,6 @@ func (w *UpdatesWorker) scheduleImports(ctx context.Context, resources []ckan.Re
 		}
 
 		w.logger.Info("Import jobs scheduled", "tier", tier.name, "count", len(results))
-		w.jobsScheduled.Add(ctx, int64(len(results)), metric.WithAttributes(
-			attribute.String("job_type", "import"),
-			attribute.String("tier", tier.name),
-		))
 
 		// Wait for this tier to complete before moving to next
 		if err = w.waitForJobs(ctx, results); err != nil {

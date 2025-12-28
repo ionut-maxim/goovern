@@ -13,7 +13,6 @@ import (
 	"github.com/charmbracelet/ssh"
 
 	"github.com/ionut-maxim/goovern/config"
-	"github.com/ionut-maxim/goovern/telemetry"
 	"github.com/ionut-maxim/goovern/worker"
 )
 
@@ -30,30 +29,7 @@ func main() {
 		log.Fatal("failed to load config")
 	}
 
-	var logger *slog.Logger
-	var otelShutdown telemetry.Shutdown
-
-	if cfg.Telemetry.Enabled {
-		logger, otelShutdown, err = telemetry.Setup(
-			ctx,
-			cfg.Telemetry.ServiceName,
-			cfg.Telemetry.ServiceVersion,
-			cfg.Telemetry.OTELEndpoint,
-		)
-		if err != nil {
-			log.Fatalf("failed to setup telemetry: %v", err)
-		}
-		defer func() {
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := otelShutdown(shutdownCtx); err != nil {
-				slog.Error("failed to shutdown telemetry", "error", err)
-			}
-		}()
-		logger.Info("OpenTelemetry initialized", "endpoint", cfg.Telemetry.OTELEndpoint)
-	} else {
-		logger = cfg.Log.New()
-	}
+	logger := cfg.Log.New()
 
 	pool, db, err := newDB(cfg.DB.Url, logger)
 	if err != nil {

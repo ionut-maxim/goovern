@@ -33,17 +33,9 @@ func (l Log) New() *slog.Logger {
 	return slog.New(h)
 }
 
-type Telemetry struct {
-	Enabled        bool   `env:"ENABLED" envDefault:"false"`
-	OTELEndpoint   string `env:"OTEL_ENDPOINT" envDefault:"localhost:4317"`
-	ServiceName    string `env:"SERVICE_NAME" envDefault:"goovern"`
-	ServiceVersion string `env:"SERVICE_VERSION" envDefault:"0.1.0"`
-}
-
 type GoovernD struct {
-	DB        DB        `envPrefix:"DB_"`
-	Log       Log       `envPrefix:"LOG_"`
-	Telemetry Telemetry `envPrefix:"TELEMETRY_"`
+	DB  DB  `envPrefix:"DB_"`
+	Log Log `envPrefix:"LOG_"`
 }
 
 func Load() (GoovernD, error) {

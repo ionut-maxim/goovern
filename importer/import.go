@@ -10,12 +10,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
 
 	"github.com/ionut-maxim/goovern/ckan"
 	"github.com/ionut-maxim/goovern/db"
-	"github.com/ionut-maxim/goovern/telemetry"
 )
 
 type ImportArgs struct {
@@ -37,11 +34,6 @@ type ImportWorker struct {
 	store  ResourceStore
 	logger *slog.Logger
 
-	// Metrics
-	importDuration metric.Float64Histogram
-	importsTotal   metric.Int64Counter
-	rowsImported   metric.Int64Counter
-
 	river.WorkerDefaults[ImportArgs]
 }
 
@@ -56,41 +48,11 @@ func NewImportWorker(pool *pgxpool.Pool, store ResourceStore, repo repo, logger 
 		logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	}
 
-	// Initialize metrics
-	meter := telemetry.Meter()
-	importDuration, err := meter.Float64Histogram(
-		"goovern.import.duration",
-		metric.WithDescription("Duration of import operations in seconds"),
-		metric.WithUnit("s"),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	importsTotal, err := meter.Int64Counter(
-		"goovern.import.total",
-		metric.WithDescription("Total number of import operations"),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	rowsImported, err := meter.Int64Counter(
-		"goovern.import.rows",
-		metric.WithDescription("Total number of rows imported"),
-	)
-	if err != nil {
-		return nil, err
-	}
-
 	return &ImportWorker{
-		db:             pool,
-		repo:           repo,
-		store:          store,
-		logger:         logger.With("worker", "import"),
-		importDuration: importDuration,
-		importsTotal:   importsTotal,
-		rowsImported:   rowsImported,
+		db:     pool,
+		repo:   repo,
+		store:  store,
+		logger: logger.With("worker", "import"),
 	}, nil
 }
 
@@ -119,17 +81,7 @@ func (w *ImportWorker) Work(ctx context.Context, job *river.Job[ImportArgs]) err
 	resource := job.Args.Resource
 	startTime := time.Now()
 
-	// Start span for tracing
-	ctx, span := telemetry.StartSpan(ctx, "import.work",
-		attribute.String("resource.id", resource.Id.String()),
-		attribute.String("resource.name", resource.Name),
-		attribute.Int("job.attempt", job.Attempt),
-		attribute.Int("job.priority", job.Priority),
-	)
-	defer span.End()
-
-	// Create logger with trace context for correlation
-	logger := telemetry.LoggerWithTrace(ctx, w.logger).With(
+	logger := w.logger.With(
 		"resource_id", resource.Id,
 		"resource_name", resource.Name,
 		"attempt", job.Attempt,
@@ -137,17 +89,9 @@ func (w *ImportWorker) Work(ctx context.Context, job *river.Job[ImportArgs]) err
 
 	logger.Info("Starting import", "priority", job.Priority)
 
-	// Metric attributes for this import
-	metricAttrs := metric.WithAttributes(
-		attribute.String("resource.name", resource.Name),
-		attribute.String("status", "success"),
-	)
-
 	tx, err := w.db.Begin(ctx)
 	if err != nil {
 		logger.Error("Failed to begin transaction", "error", err)
-		telemetry.RecordError(span, err)
-		w.recordFailure(ctx, resource, startTime)
 		return err
 	}
 	defer tx.Rollback(ctx)
@@ -156,8 +100,6 @@ func (w *ImportWorker) Work(ctx context.Context, job *river.Job[ImportArgs]) err
 	data, err := w.store.Load(ctx, resource)
 	if err != nil {
 		logger.Error("Failed to load file from store", "error", err)
-		telemetry.RecordError(span, err)
-		w.recordFailure(ctx, resource, startTime)
 		return err
 	}
 	defer data.Close()
@@ -165,43 +107,23 @@ func (w *ImportWorker) Work(ctx context.Context, job *river.Job[ImportArgs]) err
 	logger.Info("Importing data to database")
 	if err = w.repo.Import(ctx, tx, resource, data); err != nil {
 		logger.Error("Import failed", "error", err)
-		telemetry.RecordError(span, err)
-		w.recordFailure(ctx, resource, startTime)
 		return err
 	}
 
 	logger.Debug("Saving resource metadata")
 	if err = w.repo.SaveResource(ctx, tx, resource); err != nil {
 		logger.Error("Failed to save resource metadata", "error", err)
-		telemetry.RecordError(span, err)
-		w.recordFailure(ctx, resource, startTime)
 		return err
 	}
 
 	logger.Debug("Committing transaction")
 	if err = tx.Commit(ctx); err != nil {
 		logger.Error("Failed to commit transaction", "error", err)
-		telemetry.RecordError(span, err)
-		w.recordFailure(ctx, resource, startTime)
 		return err
 	}
 
 	duration := time.Since(startTime).Seconds()
 	logger.Info("Import completed successfully", "duration_seconds", duration)
 
-	// Record success metrics
-	w.importDuration.Record(ctx, duration, metricAttrs)
-	w.importsTotal.Add(ctx, 1, metricAttrs)
-
 	return nil
-}
-
-func (w *ImportWorker) recordFailure(ctx context.Context, resource ckan.Resource, startTime time.Time) {
-	duration := time.Since(startTime).Seconds()
-	metricAttrs := metric.WithAttributes(
-		attribute.String("resource.name", resource.Name),
-		attribute.String("status", "failure"),
-	)
-	w.importDuration.Record(ctx, duration, metricAttrs)
-	w.importsTotal.Add(ctx, 1, metricAttrs)
 }
