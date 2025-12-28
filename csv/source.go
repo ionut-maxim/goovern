@@ -2,8 +2,6 @@ package csv
 
 import "io"
 
-// ProgressCallback is called periodically during CSV processing
-// rowCount is the total number of rows processed so far
 type ProgressCallback func(rowCount int64)
 
 func NewSource(data *GoovernReader) *Source {

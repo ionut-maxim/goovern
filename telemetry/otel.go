@@ -37,7 +37,6 @@ func Setup(ctx context.Context, serviceName, serviceVersion, otelEndpoint string
 		return err
 	}
 
-	// Create resource
 	res, err := sdkresource.New(ctx,
 		sdkresource.WithAttributes(
 			semconv.ServiceName(serviceName),
@@ -53,7 +52,6 @@ func Setup(ctx context.Context, serviceName, serviceVersion, otelEndpoint string
 		return nil, nil, fmt.Errorf("failed to create resource: %w", err)
 	}
 
-	// Setup Trace Provider
 	traceExporter, err := otlptracegrpc.New(ctx,
 		otlptracegrpc.WithEndpoint(otelEndpoint),
 		otlptracegrpc.WithInsecure(),
@@ -70,13 +68,11 @@ func Setup(ctx context.Context, serviceName, serviceVersion, otelEndpoint string
 	shutdownFuncs = append(shutdownFuncs, traceProvider.Shutdown)
 	otel.SetTracerProvider(traceProvider)
 
-	// Setup propagation
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 		propagation.TraceContext{},
 		propagation.Baggage{},
 	))
 
-	// Setup Metric Provider
 	metricExporter, err := otlpmetricgrpc.New(ctx,
 		otlpmetricgrpc.WithEndpoint(otelEndpoint),
 		otlpmetricgrpc.WithInsecure(),
@@ -92,12 +88,10 @@ func Setup(ctx context.Context, serviceName, serviceVersion, otelEndpoint string
 	shutdownFuncs = append(shutdownFuncs, metricProvider.Shutdown)
 	otel.SetMeterProvider(metricProvider)
 
-	// Start runtime metrics collection
 	if err = runtime.Start(runtime.WithMinimumReadMemStatsInterval(time.Second)); err != nil {
 		return nil, nil, fmt.Errorf("failed to start runtime metrics: %w", err)
 	}
 
-	// Setup Log Provider
 	logExporter, err := otlploggrpc.New(ctx,
 		otlploggrpc.WithEndpoint(otelEndpoint),
 		otlploggrpc.WithInsecure(),
@@ -112,10 +106,8 @@ func Setup(ctx context.Context, serviceName, serviceVersion, otelEndpoint string
 	)
 	shutdownFuncs = append(shutdownFuncs, logProvider.Shutdown)
 
-	// Create slog handler that bridges to OTEL
 	otelHandler := otelslog.NewHandler(serviceName, otelslog.WithLoggerProvider(logProvider))
 
-	// Also create a JSON handler for stdout (for development visibility)
 	stdoutHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	})

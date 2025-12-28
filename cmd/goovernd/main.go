@@ -78,12 +78,8 @@ func main() {
 
 	logger.Info("shutting down gracefully")
 
-	// Cancel the worker context FIRST - this signals River to stop accepting new jobs
-	// and start cancelling running job contexts
 	workerCancel()
 
-	// Create a timeout context for the shutdown process
-	// River will cancel job contexts when this timeout expires
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer func() { cancel() }()
 

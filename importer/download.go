@@ -118,14 +118,12 @@ func (w *DownloadWorker) Work(ctx context.Context, job *river.Job[DownloadArgs])
 	)
 	defer span.End()
 
-	// Create logger with trace context for correlation
 	logger := telemetry.LoggerWithTrace(ctx, w.logger).With(
 		"resource_id", resource.Id,
 		"resource_name", resource.Name,
 		"attempt", job.Attempt,
 	)
 
-	// Metric attributes
 	metricAttrs := metric.WithAttributes(
 		attribute.String("resource.name", resource.Name),
 		attribute.String("status", "success"),
@@ -137,7 +135,6 @@ func (w *DownloadWorker) Work(ctx context.Context, job *river.Job[DownloadArgs])
 		logger.Error("Download failed", "error", err)
 		telemetry.RecordError(span, err)
 
-		// Record failure metrics
 		duration := time.Since(startTime).Seconds()
 		failureAttrs := metric.WithAttributes(
 			attribute.String("resource.name", resource.Name),
@@ -152,10 +149,8 @@ func (w *DownloadWorker) Work(ctx context.Context, job *river.Job[DownloadArgs])
 	duration := time.Since(startTime).Seconds()
 	logger.Info("Download completed successfully", "duration_seconds", duration)
 
-	// Record success metrics
 	w.downloadDuration.Record(ctx, duration, metricAttrs)
 	w.downloadsTotal.Add(ctx, 1, metricAttrs)
-	// Note: bytes downloaded would need to be returned from store.Save() to track accurately
 
 	return nil
 }
